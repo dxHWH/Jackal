@@ -13,6 +13,9 @@ from Bullet.BulletManager import BulletManager
 from Unit.EnemyAI import EnemyAI
 from Bullet.NormalShell.NormalShell import NormalShell
 
+#最大可视半径：
+UNIT_SIGHT_RANGE = 400.0
+
 class JackalEnv:
     def __init__(self, headless=True, fixed_delta_time=0.1, use_video=False, video_dir="videos"):
         self.headless = headless
@@ -39,8 +42,12 @@ class JackalEnv:
             self.screen = pygame.Surface((self.screen_width, self.screen_height))
             
         self.n_agents = 1
-        self.n_enemies = 5
+        self.n_enemies = 10
         self.max_steps = 500
+        
+        # 新增：维护每个智能体的开火冷却时间
+        self.fire_cooldown_max = 0.5  # 500毫秒冷却
+        self.agent_fire_cooldowns = {i: 0.0 for i in range(self.n_agents)}
         
         if self.use_video:
             os.makedirs(self.video_dir, exist_ok=True)
@@ -77,7 +84,8 @@ class JackalEnv:
 
     @property
     def n_actions(self):
-        return 9 + self.n_enemies
+        """动作空间：9个组合机动动作 + 16个定向射击动作 = 25"""
+        return 9 + 16
 
     def get_avail_agent_actions(self, agent_id):
         avail_actions = [0] * self.n_actions
@@ -86,20 +94,25 @@ class JackalEnv:
             avail_actions[0] = 1 
             return avail_actions
             
-        avail_actions[0:9] = [1] * 9
+        # 9种机动总是可用
+        avail_actions[0:9] = [1] * 9  
         
-        for i, enemy in enumerate(self.enemies):
-            if enemy.is_alive:
-                avail_actions[9 + i] = 1
+        # 16个射击方向也始终可用（智能体可以随意向空地开火）
+        # 就算在冷却中也可以输出攻击指令（环境内部会拦截无效开火）
+        avail_actions[9:25] = [1] * 16
                 
         return avail_actions
-
     def get_avail_actions(self):
         return [self.get_avail_agent_actions(i) for i in range(self.n_agents)]
 
     def step(self, actions):
         self.steps += 1
         
+        # --- 0. 更新开火冷却时间 ---
+        for i in range(self.n_agents):
+            if self.agent_fire_cooldowns[i] > 0:
+                self.agent_fire_cooldowns[i] -= self.delta_time
+
         # --- 1. 动作解析 ---
         for agent_id, agent in enumerate(self.agents):
             if not agent.is_alive:
@@ -109,6 +122,7 @@ class JackalEnv:
             agent.set_movement(forward=False, backward=False)
             agent.set_turning(left=False, right=False)
             
+            # 解析 1-8 的机动动作
             if action == 1: agent.set_movement(forward=True, backward=False)
             elif action == 2: agent.set_movement(forward=False, backward=True)
             elif action == 3: agent.set_turning(left=True, right=False)
@@ -125,20 +139,22 @@ class JackalEnv:
             elif action == 8:
                 agent.set_movement(forward=False, backward=True)
                 agent.set_turning(left=False, right=True)
+                
+            # 解析 9-24 的 16 维定向射击动作
             elif action >= 9:
-                enemy_idx = action - 9
-                if enemy_idx < len(self.enemies) and self.enemies[enemy_idx].is_alive:
-                    target_enemy = self.enemies[enemy_idx]
-                    dx = target_enemy.position[0] - agent.position[0]
-                    dy = target_enemy.position[1] - agent.position[1]
-                    target_angle = math.degrees(math.atan2(dy, dx)) + 90
-                    target_angle = target_angle % 360
-                    if target_angle < 0: target_angle += 360
-                        
-                    agent.turret_target_angle = target_angle
+                dir_idx = action - 9
+                target_angle = dir_idx * (360.0 / 16.0)  # 计算对应的绝对角度
+                
+                # 设置炮塔目标角度
+                agent.turret_target_angle = target_angle
+                
+                # 检查冷却时间是否允许开火
+                if self.agent_fire_cooldowns[agent_id] <= 0:
                     bullet = agent.fire(NormalShell)
                     if bullet:
                         self.bullet_manager.add_bullet(bullet)
+                        # 重置该智能体的冷却时间
+                        self.agent_fire_cooldowns[agent_id] = self.fire_cooldown_max
 
         # --- 2. 物理更新 ---
         for agent in self.agents: agent.update(self.delta_time, self.game_map.obstacles)
@@ -150,8 +166,120 @@ class JackalEnv:
         # --- 3. 视频录制 ---
         if self.use_video:
             self._render_to_video()
+
+        # --- 4. 收集反馈信息 (新增) ---
+        done = self._check_done()
+        reward = 0.0  # 我们会在后续设计具体的奖励函数
+        info = {
+            "battle_won": all(not enemy.is_alive for enemy in self.enemies)
+        }
         
-        return self.get_obs(), self.get_state(), 0, False, {}
+        return self.get_obs(), self.get_state(), 0, done, {}
+    
+    def _check_done(self):
+        """检查当前回合是否结束"""
+        # 1. 达到最大步数限制（超时）
+        if self.steps >= self.max_steps:
+            return True
+            
+        # 2. 玩家队伍全灭
+        agents_dead = all(not agent.is_alive for agent in self.agents)
+        if agents_dead:
+            return True
+            
+        # 3. 敌方队伍全灭
+        enemies_dead = all(not enemy.is_alive for enemy in self.enemies)
+        if enemies_dead:
+            return True
+            
+        return False
+
+    def check_visibility(self, observer, target, sight_range=400.0):
+        """
+        判断 target 是否在 observer 的视野范围内且未被障碍物遮挡
+        """
+        if not observer.is_alive or not target.is_alive:
+            return False
+            
+        # 1. 计算距离
+        dx = target.position[0] - observer.position[0]
+        dy = target.position[1] - observer.position[1]
+        distance = math.hypot(dx, dy)
+        
+        # 超过视野限制
+        if distance > sight_range:
+            return False
+            
+        # 2. 障碍物遮挡检测 (Line of Sight Raycasting)
+        line_start = observer.position
+        line_end = target.position
+        
+        for obstacle_rect in self.game_map.obstacles:
+            # clipline 如果返回非空元组，说明视线穿过了这个矩形障碍物
+            if obstacle_rect.clipline(line_start, line_end):
+                return False
+                
+        return True
+    
+    def get_obs(self):
+        """
+        获取所有智能体的局部观测 (Observation)
+        返回: list[np.ndarray]，长度为 n_agents
+        """
+        obs_list = []
+        sight_range = 400.0
+        
+        for agent_id, agent in enumerate(self.agents):
+            if not agent.is_alive:
+                # 阵亡智能体返回全 0 观测，维度需与存活时保持一致
+                obs_dim = 8 + (self.n_agents - 1) * 5 + self.n_enemies * 5
+                obs_list.append(np.zeros(obs_dim, dtype=np.float32))
+                continue
+                
+            obs_features = []
+            # --- 1. 自身特征 (8维) ---
+            hp_ratio = agent.health / agent.max_health
+            v_x = agent.speed * math.cos(math.radians(agent.direction_angle - 90))
+            v_y = agent.speed * math.sin(math.radians(agent.direction_angle - 90))
+            cos_dir = math.cos(math.radians(agent.direction_angle))
+            sin_dir = math.sin(math.radians(agent.direction_angle))
+            cos_turret = math.cos(math.radians(agent.turret_direction_angle))
+            sin_turret = math.sin(math.radians(agent.turret_direction_angle))
+            
+            # 冷却比例：让智能体知道自己现在能不能开火
+            cooldown_ratio = self.agent_fire_cooldowns[agent_id] / self.fire_cooldown_max
+            
+            obs_features.extend([hp_ratio, v_x, v_y, cos_dir, sin_dir, cos_turret, sin_turret, cooldown_ratio])
+            
+            # --- 2. 友军特征 ---
+            for other_id, other_agent in enumerate(self.agents):
+                if other_id == agent_id:
+                    continue
+                if self.check_visibility(agent, other_agent, sight_range):
+                    rel_x = other_agent.position[0] - agent.position[0]
+                    rel_y = other_agent.position[1] - agent.position[1]
+                    dist = math.hypot(rel_x, rel_y) / sight_range  # 归一化距离
+                    other_hp = other_agent.health / other_agent.max_health
+                    obs_features.extend([1.0, rel_x/100.0, rel_y/100.0, dist, other_hp])
+                else:
+                    # 不可见时，强行切断信息源
+                    obs_features.extend([0.0, 0.0, 0.0, 0.0, 0.0])
+                    
+            # --- 3. 敌军特征 ---
+            for enemy in self.enemies:
+                if self.check_visibility(agent, enemy, sight_range):
+                    rel_x = enemy.position[0] - agent.position[0]
+                    rel_y = enemy.position[1] - agent.position[1]
+                    dist = math.hypot(rel_x, rel_y) / sight_range
+                    enemy_hp = enemy.health / enemy.max_health
+                    obs_features.extend([1.0, rel_x/100.0, rel_y/100.0, dist, enemy_hp])
+                else:
+                    # 视野外被限制信息
+                    obs_features.extend([0.0, 0.0, 0.0, 0.0, 0.0])
+                    
+            obs_list.append(np.array(obs_features, dtype=np.float32))
+            
+        return obs_list
 
     def _render_to_video(self):
         """将当前游戏状态绘制到内存中的 Surface，并转换为 OpenCV 视频帧"""
@@ -177,7 +305,6 @@ class JackalEnv:
         
         self.video_writer.write(frame)
 
-    def get_obs(self): return [np.zeros(10)] * self.n_agents
     def get_state(self): return np.zeros(20)
     
     def close(self):

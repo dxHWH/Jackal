@@ -18,21 +18,33 @@ def test_marl_env():
     
     for step in range(300):
         avail_actions = env.get_avail_actions()[0]
-        
-        #valid_action_indices = [i for i, is_available in enumerate(avail_actions) if is_available == 1]
-        #chosen_action = random.choice(valid_action_indices)
-        #actions = [chosen_action]
+        #----随机取动作----#
+        # valid_action_indices = [i for i, is_available in enumerate(avail_actions) if is_available == 1]
+        # chosen_action = random.choice(valid_action_indices)
+        # actions = [chosen_action]
+        #------------------#
+
+        #----固定取动作（测试用）----#
         actions = [0]  # 默认动作：不移动也不转向
+        #---------------------------#
+
         obs, state, reward, done, info = env.step(actions)
         if done:
             print(f"\n>>> [Step {step}] Episode 结束！<<<")
             break
-        if step % 10 == 0 or step == 15 or step == 16:
+        if step % 10 == 0:
             print(f"\n--- [Step {step}] 状态报告 (场上子弹: {len(env.bullet_manager.bullets)}) ---")
+            
+            # 打印智能体 0 的局部观测向量
+            print(f"  [观测向量 obs] : {obs[0]}")
+            
             for agent in env.agents:
-                info = agent.get_info()
-                print(f"  [玩家] 位置: ({info['position'][0]:.1f}, {info['position'][1]:.1f}) | 朝向: {info['direction']:>5.1f}")
-
+                info_agent = agent.get_info()
+                print(f"  [玩家] 位置: ({info_agent['position'][0]:.1f}, {info_agent['position'][1]:.1f}) | 朝向: {info_agent['direction']:>5.1f} | 血量: {info_agent['health']}")
+            for enemy in env.enemies:
+                info_enemy = enemy.get_info()
+                print(f"  [敌军] 位置: ({info_enemy['position'][0]:.1f}, {info_enemy['position'][1]:.1f}) | 血量: {info_enemy['health']}")
+    
     print("\n测试完成。正在保存录像文件...")
     env.close()  # 必须调用 close 以正确释放视频文件写入锁
     print("录像保存成功！请查看 'jackal_records' 文件夹。")
