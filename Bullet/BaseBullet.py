@@ -14,7 +14,7 @@ import os
 class BaseBullet:
     def __init__(self, 
                  projectile_id: str, 
-                 shooter_id: int, 
+                 shooter, 
                  shooter_team: Team,
                  position: Tuple[float, float] = (0.0, 0.0), 
                  velocity_direction: Tuple[float, float] = (1.0, 0.0),
@@ -24,7 +24,8 @@ class BaseBullet:
                  lifetime: float = 3.0,
                  speed_rate: float = 1.0,
                  damage_rate: float = 1.0,
-                 penetration: List[float] = None,
+                 cooldown: float = 0.2,
+                 penetration = None,
                  is_explosive: bool = False,
                  explosion_radius: float = 0.0,
                  explosion_damage_rate: float = 1.0,
@@ -32,7 +33,7 @@ class BaseBullet:
         
         # 基本信息
         self.id: str = projectile_id
-        self.shooter_id: int = shooter_id
+        self.shooter = shooter
         self.shooter_team: Team = shooter_team
         
         # 图像和渲染
@@ -44,7 +45,7 @@ class BaseBullet:
         else:
             self.size = size
             
-        # 弹道属性
+        # 基本属性
         self.max_lifetime: float = lifetime                                                 # 射程
         self.speed_rate: float = speed_rate
         self.damage_rate: float = damage_rate
@@ -52,6 +53,7 @@ class BaseBullet:
         
         self.speed: float = BULLET_SPEED * self.speed_rate                                  # 速度
         self.base_damage: float = BULLET_DAMAGE * self.damage_rate                          # 基础伤害
+        self.cooldown: float = cooldown                                                     # 开火冷却时间
         
         # 爆炸
         self.is_explosive: bool = is_explosive                                              # 是否为爆炸弹
@@ -68,17 +70,18 @@ class BaseBullet:
         self.velocity_direction: Tuple[float, float] = velocity_direction
         self.velocity: Tuple[float, float] = self._calculate_velocity()
         self.bounding_box: pygame.Rect = bounding_box if bounding_box else self._update_bounding_box()
-        self.rotation_angle: float = math.degrees(math.atan2(velocity_direction[1], velocity_direction[0]))
+        self.rotation_angle: float = math.degrees(math.atan2(velocity_direction[1], velocity_direction[0])) + 90
         
         # 状态标志
         self.is_active: bool = True
         self.has_collided: bool = False
         self.has_exploded: bool = False
         self.explosion_timer: float = 0.0
-        self.max_explosion_display_time: float = 0.3  # 爆炸效果显示时间
+        self.max_explosion_display_time: float = 0.2  # 爆炸效果显示时间
         self.collided_with: Optional[str] = None  # 'unit', 'obstacle', 'friendly'
         self.collided_objects: List[Any] = []  # 碰撞到的对象列表
         self.distance_traveled: float = 0.0  # 已飞行距离
+        self.potential_recorded_units: set = set()   # 存储已经贡献过潜在伤害的单位id
         
         # 初始化碰撞箱
         self._update_bounding_box()
@@ -111,13 +114,13 @@ class BaseBullet:
         )
         return self.bounding_box
     
-    def update(self, delta_time: float, units: List[Any], obstacles: List[pygame.Rect]) -> bool:
+    def update(self, delta_time: float, unit_manager, game_map) -> bool:
         """
         更新子弹状态
         """
         if not self.is_active:
             return False
-            
+        
         # 如果已经爆炸，处理爆炸效果
         if self.has_exploded:
             return self._update_explosion(delta_time)
@@ -139,17 +142,20 @@ class BaseBullet:
         # 更新已飞行距离
         self.distance_traveled += math.sqrt(dx**2 + dy**2)
         
+        # 检查与单位的潜在伤害
+        self._check_potential_damage(unit_manager)
+        
         # 检查与障碍物的碰撞
-        obstacle_collision = self._check_obstacle_collision(obstacles)
+        obstacle_collision = self._check_obstacle_collision(game_map)
         if obstacle_collision:
             self._handle_obstacle_collision()
             return self.is_active
         
         # 检查与单位的碰撞
-        unit_collision = self._check_unit_collision(units)
+        unit_collision = self._check_unit_collision(unit_manager)
         if unit_collision:
             unit = unit_collision
-            self._handle_unit_collision(unit)
+            self._handle_unit_collision(unit, unit_manager)
             return self.is_active
         
         return True
@@ -161,16 +167,16 @@ class BaseBullet:
             self.is_active = False
         return True  # 在爆炸期间仍然返回True，以便绘制爆炸效果
     
-    def _check_obstacle_collision(self, obstacles: List[pygame.Rect]) -> Optional[pygame.Rect]:
-        """检查与障碍物的碰撞"""
-        for obstacle in obstacles:
+    def _check_obstacle_collision(self, game_map):
+        """检查与障碍物的碰撞（使用 bullet_obstacles）"""
+        for obstacle in game_map.bullet_obstacles: 
             if self.bounding_box.colliderect(obstacle):
                 return obstacle
         return None
     
-    def _check_unit_collision(self, units: List[Any]) -> Optional[Any]:
+    def _check_unit_collision(self, unit_manager):
         """检查与单位的碰撞"""
-        for unit in units:
+        for unit in unit_manager.units:
             # 跳过无效单位
             if not hasattr(unit, 'is_alive') or not unit.is_alive:
                 continue
@@ -182,6 +188,7 @@ class BaseBullet:
         return None
     
     def _handle_obstacle_collision(self):
+        
         """处理与障碍物的碰撞"""
         self.has_collided = True
         self.collided_with = 'obstacle'
@@ -191,7 +198,7 @@ class BaseBullet:
         else:
             self.is_active = False
     
-    def _handle_unit_collision(self, unit):
+    def _handle_unit_collision(self, unit, unit_manager):
         """处理与单位的碰撞"""
         self.has_collided = True
         self.collided_objects.append(unit)
@@ -210,11 +217,12 @@ class BaseBullet:
         
         # 应用伤害
         if hasattr(unit, 'take_damage'):
-            unit.take_damage(damage)
+            unit.take_damage(unit_manager, self.shooter, damage)
         
         # 如果子弹会爆炸，触发爆炸
         if self.is_explosive:
             self._trigger_explosion()
+            self.apply_explosion_damage(unit_manager)
         else:
             self.is_active = False
     
@@ -240,6 +248,32 @@ class BaseBullet:
         
         return base_damage
     
+    def _check_potential_damage(self, unit_manager):
+        """
+        检查子弹是否进入任何存活单位的潜在伤害范围（100像素）
+        如果进入且尚未对该单位记录过，则累加潜在伤害到该单位
+        """
+        threshold = POTENTIAL_DAMAGE_THRESHOLD
+        for unit in unit_manager.units:
+            if not unit.is_alive:
+                continue
+            # 跳过已经记录过的单位
+            if unit.id in self.potential_recorded_units:
+                continue
+            # 计算距离
+            dx = unit.position[0] - self.position[0]
+            dy = unit.position[1] - self.position[1]
+            dist = math.hypot(dx, dy)
+            if dist <= threshold:
+                # 计算此子弹的潜在伤害：基础伤害 + 爆炸伤害（如果有）
+                potential = self.base_damage
+                if self.is_explosive:
+                    potential += BULLET_DAMAGE * self.explosion_damage_rate  # 爆炸伤害（不考虑距离衰减）
+                # 累加到单位
+                unit.potential_damage += potential
+                # 记录已处理
+                self.potential_recorded_units.add(unit.id)
+                
     def _trigger_explosion(self):
         """触发爆炸"""
         self.has_exploded = True
@@ -252,13 +286,13 @@ class BaseBullet:
             self.image = self.explosion_image
             
             # 调整大小以匹配爆炸半径
-            if self.explosion_radius > 0:
+            if self.explosion_radius > 0 and EXPLOSION_IMAGE_ADAPT_TO_RANGE:
                 scaled_size = (int(self.explosion_radius * 2), int(self.explosion_radius * 2))
                 self.image = pygame.transform.scale(self.image, scaled_size)
                 self.size = scaled_size
                 self._update_bounding_box()
     
-    def apply_explosion_damage(self, units: List[Any]) -> Dict[int, float]:
+    def apply_explosion_damage(self, unit_manager):
         """
         应用爆炸伤害到范围内的单位
         """
@@ -268,7 +302,7 @@ class BaseBullet:
         damage_map = {}
         explosion_center = self.position
         
-        for unit in units:
+        for unit in unit_manager.units:
             if not unit.is_alive:
                 continue
                 
@@ -281,10 +315,13 @@ class BaseBullet:
             distance = math.sqrt(dx**2 + dy**2)
             
             if distance <= self.explosion_radius:
-                distance_factor = 1.0 - (distance / self.explosion_radius)
-                damage = self.base_damage * self.explosion_damage_rate * distance_factor
+                if BULLET_EXPLOSION_DAMAGE_APPLY_DISTANT_FACTOR:
+                    distance_factor = 1.0 - (distance / self.explosion_radius)
+                else:
+                    distance_factor = 1.0
+                damage = BULLET_DAMAGE * self.explosion_damage_rate * distance_factor
                 
-                actual_damage = unit.take_damage(damage)
+                destroyed, actual_damage = unit.take_damage(unit_manager, self.shooter, damage)
                 damage_map[unit.id] = actual_damage
         
         return damage_map
@@ -329,22 +366,8 @@ class BaseBullet:
     
     def get_info(self) -> Dict[str, Any]:
         """获取子弹信息"""
-        return {
-            "id": self.id,
-            "shooter_id": self.shooter_id,
-            "shooter_team": self.shooter_team.value if hasattr(self.shooter_team, 'value') else str(self.shooter_team),
-            "position": self.position,
-            "speed": self.speed,
-            "damage": self.base_damage,
-            "is_explosive": self.is_explosive,
-            "explosion_radius": self.explosion_radius,
-            "lifetime": self.lifetime,
-            "max_lifetime": self.max_lifetime,
-            "is_active": self.is_active,
-            "has_collided": self.has_collided,
-            "has_exploded": self.has_exploded,
-            "distance_traveled": self.distance_traveled
-        }
+        pass
+        return {}
     
     def save_to_file(self, file_name: str = "default_bullet.json") -> bool:
         """保存子弹配置到文件"""
@@ -378,17 +401,19 @@ class BaseBullet:
             print(f"保存子弹配置失败: {e}")
             return False
     
-    def save(self) -> bool:
+    def save(self, file_name = None) -> bool:
         """便捷保存方法"""
-        save_path = get_next_filename(DEFAULT_BULLET_PATH, 'default_bullet', '.json')
-        return self.save_to_file(save_path)
+        if file_name is None:
+            save_path = get_next_filename(DEFAULT_BULLET_PATH, 'default_bullet', '.json')
+            return self.save_to_file(save_path)
+        return self.save_to_file(file_name)
     
     @classmethod
     def load_from_file(cls, file_name: str = "default_bullet.json") -> Optional[Dict[str, Any]]:
         """从文件加载子弹配置"""
+        filepath = os.path.join(DEFAULT_BULLET_PATH, file_name)
+
         try:
-            filepath = os.path.join(DEFAULT_BULLET_PATH, file_name)
-            
             with open(filepath, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             
