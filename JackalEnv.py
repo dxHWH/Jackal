@@ -311,3 +311,4 @@ class JackalEnv:
         if self.use_video and self.video_writer is not None:
             self.video_writer.release()
         pygame.quit()
+        #
