@@ -677,7 +677,7 @@ class BaseUnit:
             self.health = 0
             self.is_alive = False
             destroyed = True
-            print(f"坦克 {self.id} 被摧毁")
+            #print(f"坦克 {self.id} 被摧毁")
             damage_source.destroy_enemy_count += 1
             self.killed_by = damage_source.id
         self._handle_assistance(unit_manager, damage_source, destroyed, damage_amount)

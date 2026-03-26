@@ -57,7 +57,7 @@ class GameMap:
                 x = col_idx * self.tile_size
                 y = row_idx * self.tile_size
                 tile_class = CHAR_TO_TILE.get(ch, FlatTile)   # 未知字符默认平地
-                print(x,y,ch)
+                #print(x,y,ch)
                 if not isinstance(tile_class, type):
                     raise TypeError(f"Expected a class, got {type(tile_class)}")
                 tile = tile_class(x, y, self.tile_size)
