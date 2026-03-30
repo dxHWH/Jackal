@@ -18,7 +18,7 @@ from Unit.UnitManager import UnitManager
 
 
 class JackalEnv:
-    def __init__(self, headless=True, fixed_delta_time=0.1, use_video=False, video_dir="videos", auto_aim=True):
+    def __init__(self, headless=True, fixed_delta_time=0.01, use_video=False, video_dir="videos", auto_aim=True, reward_config=None):
         self.headless = headless
         self.delta_time = fixed_delta_time
         
@@ -27,6 +27,38 @@ class JackalEnv:
         self.video_writer = None
 
         self.auto_aim = auto_aim
+        self.reward_config = {
+            "auto_aim": {
+                "enemy_limit_scale": 0.1,
+                "agent_limit_scale": 0.1,
+                "enemy_kill_bonus": 20.0,
+                "agent_killed_penalty": 10.0,
+                "win_bonus": 30.0,
+                "lose_penalty": 30.0,
+                "timeout_penalty": 30.0,
+            },
+            "manual_aim": {
+                "enemy_limit_scale": 0.12,
+                "agent_limit_scale": 0.12,
+                "enemy_kill_bonus": 20.0,
+                "agent_killed_penalty": 12.0,
+                "aim_good_angle": 8.0,
+                "aim_ok_angle": 20.0,
+                "aim_good_reward": 0.04,
+                "aim_ok_reward": 0.015,
+                "aim_bad_penalty": 0.01,
+                "fire_good_angle": 12.0,
+                "fire_good_reward": 0.08,
+                "fire_bad_penalty": 0.06,
+                "step_penalty": 0.01,
+                "fire_action_id": 27,
+                "win_bonus": 30.0,
+                "lose_penalty": 30.0,
+                "timeout_penalty": 30.0,
+            }
+        }
+        if reward_config:
+            self._deep_update(self.reward_config, reward_config)
         
         if self.headless:
             os.environ["SDL_VIDEODRIVER"] = "dummy"
@@ -59,6 +91,17 @@ class JackalEnv:
         
         if self.use_video:
             os.makedirs(self.video_dir, exist_ok=True)
+
+    def _deep_update(self, base_dict, update_dict):
+        for key, value in update_dict.items():
+            if isinstance(value, dict) and isinstance(base_dict.get(key), dict):
+                self._deep_update(base_dict[key], value)
+            else:
+                base_dict[key] = value
+
+    def set_reward_config(self, reward_config):
+        if reward_config:
+            self._deep_update(self.reward_config, reward_config)
 
     def reset(self):
         self.steps = 0
@@ -158,7 +201,7 @@ class JackalEnv:
         # ==========================================
         # 2. 物理步进后：采集新快照并结算奖励
         post_stats = self._get_battle_stats()
-        reward, info = self._calculate_reward(pre_stats, post_stats)
+        reward, info = self._calculate_reward(pre_stats, post_stats, actions)
         done = self._check_done()
         # ==========================================
         
@@ -203,40 +246,108 @@ class JackalEnv:
             "agent_alive": sum([1 for a in self.agents if a.is_alive])
         }
 
-    def _calculate_reward(self, pre_stats, post_stats):
+    def _calculate_reward(self, pre_stats, post_stats, actions):
         """
-        完美梯度版内部奖励函数：消除对死亡的恐惧，极度鼓励输出 limit
+        根据当前瞄准模式自动切换奖励函数：
+        - auto_aim=True  -> 偏向交战结果
+        - auto_aim=False -> 增加手动瞄准过程奖励
         """
-        # 1. 提取 Limit (扣血量)
+        if self.auto_aim:
+            return self._calculate_reward_auto_aim(pre_stats, post_stats)
+        return self._calculate_reward_manual_aim(pre_stats, post_stats, actions)
+
+    def _calculate_reward_auto_aim(self, pre_stats, post_stats):
+        cfg = self.reward_config["auto_aim"]
         enemy_limit_dealt = pre_stats["enemy_health"] - post_stats["enemy_health"]
         agent_limit_received = pre_stats["agent_health"] - post_stats["agent_health"]
 
-        # 2. 提取击杀与阵亡数量
         enemies_killed = pre_stats["enemy_alive"] - post_stats["enemy_alive"]
         agents_killed = pre_stats["agent_alive"] - post_stats["agent_alive"]
 
         reward = 0.0
-        
-        # 核心：极其夸张的输出奖励，鼓励换血对枪
-        reward += (enemy_limit_dealt * 0.1)   # 每一滴血的 limit 都是丰厚的奖励
-        # reward -= (agent_limit_received * 0.1) # 挨打只受微小的惩罚
-        
-        # 事件奖励
-        reward += (enemies_killed * 20.0)
-        reward -= (agents_killed * 10.0)
+        reward += (enemy_limit_dealt * cfg["enemy_limit_scale"])
+        reward -= (agent_limit_received * cfg["agent_limit_scale"])
+        reward += (enemies_killed * cfg["enemy_kill_bonus"])
+        reward -= (agents_killed * cfg["agent_killed_penalty"])
 
-        # 3. 最终胜负判定与时间步惩罚
-        info = {"battle_won": False}
+        info = {"battle_won": False, "reward_mode": "auto_aim"}
         if post_stats["enemy_alive"] == 0:
-            reward += 30.0  # 全歼敌军，通关奖励
+            reward += cfg["win_bonus"]
             info["battle_won"] = True
         elif post_stats["agent_alive"] == 0:
-            reward -= 30.0  # 战败惩罚 (故意控制在 -30，防止超过输出 limit 带来的正收益)
+            reward -= cfg["lose_penalty"]
         elif self.steps >= self.max_steps:
-            reward -= 30.0 # 平局等于战败
-            # 时间流逝惩罚：每步 -0.05
-            # 500步总计 -25 分，比开局送死 (-50) 强，但不如出去对枪 (>=0)
-            # reward -= 0.05   
+            reward -= cfg["timeout_penalty"]
+
+        return reward, info
+
+    def _calculate_reward_manual_aim(self, pre_stats, post_stats, actions):
+        cfg = self.reward_config["manual_aim"]
+        enemy_limit_dealt = pre_stats["enemy_health"] - post_stats["enemy_health"]
+        agent_limit_received = pre_stats["agent_health"] - post_stats["agent_health"]
+
+        enemies_killed = pre_stats["enemy_alive"] - post_stats["enemy_alive"]
+        agents_killed = pre_stats["agent_alive"] - post_stats["agent_alive"]
+
+        reward = 0.0
+        reward += (enemy_limit_dealt * cfg["enemy_limit_scale"])
+        reward -= (agent_limit_received * cfg["agent_limit_scale"])
+        reward += (enemies_killed * cfg["enemy_kill_bonus"])
+        reward -= (agents_killed * cfg["agent_killed_penalty"])
+
+        aim_shaping = 0.0
+        fire_shaping = 0.0
+        for agent_id, agent in enumerate(self.agents):
+            if not agent.is_alive:
+                continue
+
+            visible_enemies = [
+                enemy for enemy in self.enemies
+                if enemy.is_alive and self.is_visible_to_agent(agent, enemy)
+            ]
+            if not visible_enemies:
+                continue
+
+            closest_enemy = min(
+                visible_enemies,
+                key=lambda enemy: math.hypot(enemy.position[0] - agent.position[0], enemy.position[1] - agent.position[1])
+            )
+
+            dx = closest_enemy.position[0] - agent.position[0]
+            dy = closest_enemy.position[1] - agent.position[1]
+            target_angle = (math.degrees(math.atan2(dy, dx)) + 90) % 360
+            angle_diff = abs(agent.get_angle_difference(agent.turret_direction_angle, target_angle))
+
+            if angle_diff <= cfg["aim_good_angle"]:
+                aim_shaping += cfg["aim_good_reward"]
+            elif angle_diff <= cfg["aim_ok_angle"]:
+                aim_shaping += cfg["aim_ok_reward"]
+            else:
+                aim_shaping -= cfg["aim_bad_penalty"]
+
+            if agent_id < len(actions) and actions[agent_id] == cfg["fire_action_id"]:
+                if angle_diff <= cfg["fire_good_angle"]:
+                    fire_shaping += cfg["fire_good_reward"]
+                else:
+                    fire_shaping -= cfg["fire_bad_penalty"]
+
+        reward += aim_shaping
+        reward += fire_shaping
+        reward -= cfg["step_penalty"]
+
+        info = {
+            "battle_won": False,
+            "reward_mode": "manual_aim",
+            "aim_shaping": round(float(aim_shaping), 4),
+            "fire_shaping": round(float(fire_shaping), 4),
+        }
+        if post_stats["enemy_alive"] == 0:
+            reward += cfg["win_bonus"]
+            info["battle_won"] = True
+        elif post_stats["agent_alive"] == 0:
+            reward -= cfg["lose_penalty"]
+        elif self.steps >= self.max_steps:
+            reward -= cfg["timeout_penalty"]
 
         return reward, info
 

@@ -1,11 +1,19 @@
 import torch
 import os
+import json
 from JackalEnv import JackalEnv
 from DQN_Test.network import QNetwork
 
 def test_model(model_path, episodes=3):
     print(f"正在加载模型并准备录制视频: {model_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    config_path = os.path.join(os.path.dirname(model_path), "dqn_run_config.json")
+    run_config = {}
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            run_config = json.load(f)
+        print(f"检测到训练配置: {config_path}")
     
     # ==========================================
     # 1. 初始化环境 (开启视频录制)
@@ -13,11 +21,28 @@ def test_model(model_path, episodes=3):
     # 注意：这里的 auto_aim 必须与你训练时保存的模型保持一致！
     # 如果你在没有 GUI 的服务器上跑，保持 headless=True；
     # use_video=True 会自动将每一帧渲染并保存为 mp4 文件。
-    env = JackalEnv(headless=True, use_video=True, video_dir="eval_videos", auto_aim=True)
+    env = JackalEnv(
+        headless=True,
+        use_video=True,
+        video_dir="eval_videos",
+        auto_aim=run_config.get("auto_aim", True)
+    )
     
     _, initial_state = env.reset()
     state_dim = initial_state.shape[0]
     action_dim = env.n_actions
+
+    if run_config:
+        expected_state_dim = run_config.get("state_dim")
+        expected_action_dim = run_config.get("action_dim")
+        if expected_state_dim is not None and state_dim != expected_state_dim:
+            print(f"状态维度不匹配: env={state_dim}, model={expected_state_dim}")
+            env.close()
+            return
+        if expected_action_dim is not None and action_dim != expected_action_dim:
+            print(f"动作维度不匹配: env={action_dim}, model={expected_action_dim}")
+            env.close()
+            return
     
     # ==========================================
     # 2. 实例化网络并加载权重

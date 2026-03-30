@@ -1,29 +1,67 @@
 import torch
 import os
+import json
 from JackalEnv import JackalEnv
 
 # 导入 DRQN 网络
 from DRQN_Test.network import DRQNNetwork
+from DRQN_Test.action_factorization import compose_action
 
 def test_drqn_model(model_path, episodes=3):
     print(f"正在加载 DRQN 模型并准备录制视频: {model_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    config_path = os.path.join(os.path.dirname(model_path), "drqn_run_config.json")
+    run_config = {}
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            run_config = json.load(f)
+        print(f"检测到训练配置: {config_path}")
     
     # ==========================================
     # 1. 初始化环境 (开启视频录制)
     # ==========================================
     # 注意：这里的 auto_aim 和 n_enemies 必须与你训练该模型时完全一致！
-    env = JackalEnv(headless=True, use_video=True, video_dir="eval_videos_drqn", auto_aim=True)
+    env = JackalEnv(
+        headless=True,
+        use_video=True,
+        video_dir="eval_videos_drqn",
+        auto_aim=run_config.get("auto_aim", False)
+    )
     
     _, initial_state = env.reset()
     state_dim = initial_state.shape[0]
     action_dim = env.n_actions
+    hidden_dim = run_config.get("hidden_dim", 128)
+    chassis_dim = run_config.get("chassis_dim", 9)
+    turret_dim = run_config.get("turret_dim", 3)
+    fire_dim = run_config.get("fire_dim", 2)
+    fire_action_id = run_config.get("fire_action_id", 27)
+
+    if run_config:
+        expected_state_dim = run_config.get("state_dim")
+        expected_action_dim = run_config.get("action_dim")
+        if expected_state_dim is not None and state_dim != expected_state_dim:
+            print(f"状态维度不匹配: env={state_dim}, model={expected_state_dim}")
+            env.close()
+            return
+        if expected_action_dim is not None and action_dim != expected_action_dim:
+            print(f"动作维度不匹配: env={action_dim}, model={expected_action_dim}")
+            env.close()
+            return
     
     # ==========================================
     # 2. 实例化网络并加载权重
     # ==========================================
-    # 这里的 hidden_dim=128 必须与训练时保持一致
-    policy_net = DRQNNetwork(state_dim, action_dim, hidden_dim=128).to(device)
+    # hidden_dim 必须与训练时保持一致（优先读取配置）
+    policy_net = DRQNNetwork(
+        state_dim,
+        action_dim,
+        hidden_dim=hidden_dim,
+        chassis_dim=chassis_dim,
+        turret_dim=turret_dim,
+        fire_dim=fire_dim,
+    ).to(device)
     
     if os.path.exists(model_path):
         policy_net.load_state_dict(torch.load(model_path, map_location=device))
@@ -51,10 +89,21 @@ def test_drqn_model(model_path, episodes=3):
             with torch.no_grad():
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
                 
-                # 网络必须同时吃下当前状态和历史记忆，并吐出 Q 值和新记忆
-                q_values, hidden_state = policy_net(state_tensor, hidden_state)
-                
-                action = q_values.argmax().item()  # 永远选择 Q 值最大的动作
+                q_chassis, q_turret, q_fire, hidden_state = policy_net(state_tensor, hidden_state)
+
+                if run_config.get("factorized_action", True):
+                    chassis_action = q_chassis.argmax(dim=1).item()
+                    turret_action = q_turret.argmax(dim=1).item()
+                    fire_action = q_fire.argmax(dim=1).item()
+                    action = compose_action(
+                        chassis_action,
+                        turret_action,
+                        fire_action,
+                        chassis_dim=chassis_dim,
+                        fire_action_id=fire_action_id,
+                    )
+                else:
+                    raise RuntimeError("当前测试脚本仅支持 factorized_action=True 的 DRQN 权重。")
                 
             _, next_state, reward, done, info = env.step([action])
             

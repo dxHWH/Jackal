@@ -1,4 +1,6 @@
 import torch
+import json
+import os
 from tqdm import tqdm  
 from JackalEnv import JackalEnv
 from DQN_Test.network import QNetwork
@@ -16,6 +18,18 @@ def main():
     _, initial_state = env.reset()
     state_dim = initial_state.shape[0]
     action_dim = env.n_actions
+
+    run_config = {
+        "algo": "dqn",
+        "auto_aim": env.auto_aim,
+        "state_dim": state_dim,
+        "action_dim": action_dim,
+        "n_agents": env.n_agents,
+        "n_enemies": env.n_enemies,
+    }
+    os.makedirs("DQN_Test/model", exist_ok=True)
+    with open("DQN_Test/model/dqn_run_config.json", "w", encoding="utf-8") as f:
+        json.dump(run_config, f, ensure_ascii=False, indent=2)
     
     # 2. 实例化共享网络并放入设备
     policy_net = QNetwork(state_dim, action_dim).to(device)

@@ -2,21 +2,25 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
+from DRQN_Test.action_factorization import decompose_action_tensor
+
 class DRQNLearner:
-    def __init__(self, policy_net, target_net, device, lr=1e-4, gamma=0.99):
+    def __init__(self, policy_net, target_net, device, lr=1e-4, gamma=0.99, tau=0.01, chassis_dim=9, fire_action_id=27):
         self.policy_net = policy_net
         self.target_net = target_net
         self.device = device
         self.gamma = gamma
+        self.tau = tau
+        self.chassis_dim = chassis_dim
+        self.fire_action_id = fire_action_id
         
         # 优化器
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
-    def train_step(self, batch):
+    def train_step(self, batch, burn_in=0):
         """
-        执行带有掩码的沿时间反向传播 (BPTT)
+        执行带有掩码的截断序列训练 (Truncated BPTT + Double DQN)
         """
-        # 1. 解析 Batch 数据 (注意现在的形状是 3D: [Batch_Size, Seq_Len, Dim])
         states, actions, rewards, next_states, dones, masks = batch
         
         states = torch.FloatTensor(states).to(self.device)
@@ -28,71 +32,88 @@ class DRQNLearner:
         
         batch_size = states.size(0)
         seq_len = states.size(1)
+        burn_in = max(0, min(burn_in, seq_len))
         
-        # 2. 初始化全零的隐状态 (Batch_Size, Hidden_Dim)
-        # Policy Network 和 Target Network 都需要各自的“空白记忆”起点
+        chassis_actions, turret_actions, fire_actions = decompose_action_tensor(
+            actions,
+            chassis_dim=self.chassis_dim,
+            fire_action_id=self.fire_action_id,
+        )
+
         h_policy = self.policy_net.init_hidden(batch_size, self.device)
         h_target = self.target_net.init_hidden(batch_size, self.device)
+        h_policy_for_next = self.policy_net.init_hidden(batch_size, self.device)
+
+        if burn_in > 0:
+            with torch.no_grad():
+                for time_index in range(burn_in):
+                    _, _, _, h_policy = self.policy_net(states[:, time_index, :], h_policy)
+                    _, _, _, h_policy_for_next = self.policy_net(states[:, time_index, :], h_policy_for_next)
+                    _, _, _, h_target = self.target_net(states[:, time_index, :], h_target)
+            h_policy = h_policy.detach()
+            h_policy_for_next = h_policy_for_next.detach()
+            h_target = h_target.detach()
         
         q_values_list = []
         target_q_values_list = []
+        valid_masks = []
         
-        # ==========================================
-        # 3. 沿时间轴展开网络 (Unroll over time)
-        # ==========================================
-        for t in range(seq_len):
-            # --- 当前动作的 Q 值评估 ---
-            # 喂入第 t 步的状态，和 t-1 步的记忆
-            q_t, h_policy = self.policy_net(states[:, t, :], h_policy)
-            # 挑出实际执行的那个动作的 Q 值
-            q_action_t = q_t.gather(1, actions[:, t, :])
+        for time_index in range(burn_in, seq_len):
+            q_chassis_t, q_turret_t, q_fire_t, h_policy = self.policy_net(states[:, time_index, :], h_policy)
+            q_chassis_selected = q_chassis_t.gather(1, chassis_actions[:, time_index, :])
+            q_turret_selected = q_turret_t.gather(1, turret_actions[:, time_index, :])
+            q_fire_selected = q_fire_t.gather(1, fire_actions[:, time_index, :])
+
+            q_action_t = q_chassis_selected + q_turret_selected + q_fire_selected
             q_values_list.append(q_action_t)
+            valid_masks.append(masks[:, time_index, :])
             
-           # --- 目标 Q 值评估 (Target) ---
             with torch.no_grad():
-                # 【极其关键的修复】：让 Target 网络先处理 current state，以获取正确的 h_{t+1}
-                _, next_h_target = self.target_net(states[:, t, :], h_target)
-                
-                # 然后，使用正确的记忆去评估 next_state
-                q_target_next, _ = self.target_net(next_states[:, t, :], next_h_target)
-                max_q_target_next = q_target_next.max(1)[0].unsqueeze(1)
-                
-                # 计算 TD Target
-                target_q_t = rewards[:, t, :] + (1 - dones[:, t, :]) * self.gamma * max_q_target_next
+                _, _, _, next_h_target = self.target_net(states[:, time_index, :], h_target)
+                _, _, _, next_h_policy_for_next = self.policy_net(states[:, time_index, :], h_policy_for_next)
+
+                q_next_online_chassis, q_next_online_turret, q_next_online_fire, _ = self.policy_net(next_states[:, time_index, :], next_h_policy_for_next)
+                next_chassis = q_next_online_chassis.argmax(dim=1, keepdim=True)
+                next_turret = q_next_online_turret.argmax(dim=1, keepdim=True)
+                next_fire = q_next_online_fire.argmax(dim=1, keepdim=True)
+
+                q_next_target_chassis, q_next_target_turret, q_next_target_fire, _ = self.target_net(next_states[:, time_index, :], next_h_target)
+                q_next_target_selected = (
+                    q_next_target_chassis.gather(1, next_chassis)
+                    + q_next_target_turret.gather(1, next_turret)
+                    + q_next_target_fire.gather(1, next_fire)
+                )
+
+                target_q_t = rewards[:, time_index, :] + (1 - dones[:, time_index, :]) * self.gamma * q_next_target_selected
                 target_q_values_list.append(target_q_t)
-                
-                # 将隐状态滚动到下一步
+
                 h_target = next_h_target
-                
-        # 4. 将每一步的计算结果重新拼接成 3D 张量 [Batch_Size, Seq_Len, 1]
+                h_policy_for_next = next_h_policy_for_next
+
+        if len(q_values_list) == 0:
+            return 0.0
+
         q_values = torch.stack(q_values_list, dim=1).squeeze(-1)
         target_q_values = torch.stack(target_q_values_list, dim=1).squeeze(-1)
-        masks = masks.squeeze(-1)
+        valid_masks = torch.stack(valid_masks, dim=1).squeeze(-1)
         
-        # ==========================================
-        # 5. 计算带掩码的损失函数 (Masked Loss)
-        # ==========================================
-        # 先计算所有位置的 Huber Loss (reduction='none' 保证它不自动求均值)
         loss = F.smooth_l1_loss(q_values, target_q_values, reduction='none')
-        
-        # 【核心操作】：用 Mask 矩阵乘以 Loss。
-        # 那些补零出来的无效步 (Mask=0) 的 Loss 会瞬间变成 0！
-        masked_loss = loss * masks
-        
-        # 计算有效步数的平均 Loss (不能直接 sum() / (Batch * Seq_Len) !)
-        # 我们只除以真实发生的总步数 (masks.sum())
-        final_loss = masked_loss.sum() / masks.sum()
-        
-        # 6. 反向传播与梯度裁剪
+        masked_loss = loss * valid_masks
+        valid_count = valid_masks.sum().clamp(min=1.0)
+        final_loss = masked_loss.sum() / valid_count
+
         self.optimizer.zero_grad()
         final_loss.backward()
-        
-        # RNN 极其容易发生梯度爆炸，这一步 clip_grad_norm_ 是保命符！
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=5.0)
-        
         self.optimizer.step()
+
+        self.soft_update_target_network()
         
         return final_loss.item()
+
+    def soft_update_target_network(self):
+        for target_param, policy_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
+            target_param.data.copy_(self.tau * policy_param.data + (1.0 - self.tau) * target_param.data)
 
     def update_target_network(self):
         """

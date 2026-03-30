@@ -63,3 +63,42 @@ class EpisodeBuffer:
                 masks[b, t] = 1.0 
                 
         return padded_states, padded_actions, padded_rewards, padded_next_states, padded_dones, masks
+
+    def sample_sequence_batch(self, batch_size, burn_in, learn_len):
+        """
+        Truncated BPTT 采样：
+        - 每条轨迹随机截取长度为 (burn_in + learn_len) 的窗口
+        - 窗口不足长度时尾部补零并用 mask 标记无效步
+        """
+        total_len = burn_in + learn_len
+        sampled_episodes = random.sample(self.buffer, batch_size)
+
+        state_dim = len(sampled_episodes[0][0][0])
+
+        padded_states = np.zeros((batch_size, total_len, state_dim), dtype=np.float32)
+        padded_actions = np.zeros((batch_size, total_len, 1), dtype=np.int64)
+        padded_rewards = np.zeros((batch_size, total_len, 1), dtype=np.float32)
+        padded_next_states = np.zeros((batch_size, total_len, state_dim), dtype=np.float32)
+        padded_dones = np.zeros((batch_size, total_len, 1), dtype=np.float32)
+        masks = np.zeros((batch_size, total_len, 1), dtype=np.float32)
+
+        for batch_index, episode in enumerate(sampled_episodes):
+            episode_len = len(episode)
+            if episode_len <= 0:
+                continue
+
+            max_start = max(0, episode_len - total_len)
+            start = random.randint(0, max_start)
+            end = min(start + total_len, episode_len)
+            window = episode[start:end]
+
+            for time_index, transition in enumerate(window):
+                state, action, reward, next_state, done = transition
+                padded_states[batch_index, time_index] = state
+                padded_actions[batch_index, time_index] = action
+                padded_rewards[batch_index, time_index] = reward
+                padded_next_states[batch_index, time_index] = next_state
+                padded_dones[batch_index, time_index] = done
+                masks[batch_index, time_index] = 1.0
+
+        return padded_states, padded_actions, padded_rewards, padded_next_states, padded_dones, masks

@@ -1,4 +1,7 @@
 import torch
+import json
+import os
+import argparse
 from tqdm import tqdm
 from JackalEnv import JackalEnv
 
@@ -8,23 +11,102 @@ from DRQN_Test.agent import DRQNAgent
 from DRQN_Test.buffer import EpisodeBuffer
 from DRQN_Test.learner import DRQNLearner
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="DRQN 1v1 training")
+    parser.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument("--episodes", type=int, default=6000)
+    parser.add_argument("--max-steps", type=int, default=300)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--min-buffer-episodes", type=int, default=8)
+    parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--tau", type=float, default=0.01)
+    parser.add_argument("--burn-in", type=int, default=20)
+    parser.add_argument("--learn-len", type=int, default=40)
+    parser.add_argument("--train-every-steps", type=int, default=10)
+    parser.add_argument("--updates-per-train", type=int, default=2)
+    parser.add_argument("--target-update-freq", type=int, default=10)
+    parser.add_argument("--fire-explore-bias", type=float, default=0.25)
+    parser.add_argument("--headless", action="store_true", default=True)
+    parser.add_argument("--no-headless", action="store_false", dest="headless")
+    parser.add_argument("--auto-aim", action="store_true", default=False)
+    parser.add_argument("--save-prefix", type=str, default="drqn")
+    return parser.parse_args()
+
 def main():
+    args = parse_args()
+    if torch.cuda.is_available():
+        torch.cuda.set_device(args.gpu_id)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"初始化 JackalEnv (DRQN 序列化架构) | 当前计算设备: {device.type.upper()}")
+    if device.type == "cuda":
+        print(f"使用 GPU: {torch.cuda.get_device_name(torch.cuda.current_device())} (id={args.gpu_id})")
     
     # ==========================================
     # 1. 实例化环境 (你可以随时把 n_enemies 改为 2 开启 1v2 挑战)
     # ==========================================
-    env = JackalEnv(headless=True, use_video=False, auto_aim=False)
+    env = JackalEnv(headless=args.headless, use_video=False, auto_aim=args.auto_aim)
+    env.max_steps = args.max_steps
     _, initial_state = env.reset()
     state_dim = initial_state.shape[0]
     action_dim = env.n_actions
+    hidden_dim = args.hidden_dim
+    chassis_dim = 9
+    turret_dim = 1 if env.auto_aim else 3
+    fire_dim = 2
+    fire_action_id = 9 if env.auto_aim else 27
+
+    run_config = {
+        "algo": "drqn",
+        "auto_aim": env.auto_aim,
+        "state_dim": state_dim,
+        "action_dim": action_dim,
+        "factorized_action": True,
+        "chassis_dim": chassis_dim,
+        "turret_dim": turret_dim,
+        "fire_dim": fire_dim,
+        "hidden_dim": hidden_dim,
+        "n_agents": env.n_agents,
+        "n_enemies": env.n_enemies,
+        "burn_in": args.burn_in,
+        "learn_len": args.learn_len,
+        "train_every_steps": args.train_every_steps,
+        "updates_per_train": args.updates_per_train,
+        "fire_action_id": fire_action_id,
+        "fire_explore_bias": args.fire_explore_bias,
+        "batch_size": args.batch_size,
+        "episodes": args.episodes,
+        "lr": args.lr,
+        "tau": args.tau,
+        "target_update_freq": args.target_update_freq,
+        "gpu_id": args.gpu_id,
+        "max_steps": args.max_steps,
+        "min_buffer_episodes": args.min_buffer_episodes,
+    }
+    os.makedirs("DRQN_Test/models", exist_ok=True)
+    with open("DRQN_Test/models/drqn_run_config.json", "w", encoding="utf-8") as f:
+        json.dump(run_config, f, ensure_ascii=False, indent=2)
     
     # ==========================================
     # 2. 实例化带 GRU 记忆的神经网络
     # ==========================================
-    policy_net = DRQNNetwork(state_dim, action_dim, hidden_dim=128).to(device)
-    target_net = DRQNNetwork(state_dim, action_dim, hidden_dim=128).to(device)
+    policy_net = DRQNNetwork(
+        state_dim,
+        action_dim,
+        hidden_dim=hidden_dim,
+        chassis_dim=chassis_dim,
+        turret_dim=turret_dim,
+        fire_dim=fire_dim,
+    ).to(device)
+    target_net = DRQNNetwork(
+        state_dim,
+        action_dim,
+        hidden_dim=hidden_dim,
+        chassis_dim=chassis_dim,
+        turret_dim=turret_dim,
+        fire_dim=fire_dim,
+    ).to(device)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()
     
@@ -33,20 +115,41 @@ def main():
     # ==========================================
     # 容量 2000 局 (如果显存吃紧，可以适当调小)
     buffer = EpisodeBuffer(capacity=2000) 
-    agent = DRQNAgent(action_dim, policy_net, device)
-    learner = DRQNLearner(policy_net, target_net, device, lr=0.0001)
+    agent = DRQNAgent(
+        action_dim,
+        policy_net,
+        device,
+        chassis_dim=run_config["chassis_dim"],
+        turret_dim=run_config["turret_dim"],
+        fire_action_id=run_config["fire_action_id"],
+        fire_explore_bias=run_config["fire_explore_bias"],
+    )
+    learner = DRQNLearner(
+        policy_net,
+        target_net,
+        device,
+        lr=args.lr,
+        tau=args.tau,
+        chassis_dim=run_config["chassis_dim"],
+        fire_action_id=run_config["fire_action_id"],
+    )
     
     # DRQN 超参数：
     # 因为一条轨迹可能长达 500 步，Batch Size 不能像 DQN 那样设为 128
     # 设为 32 条轨迹 (32 * 500 = 16000 帧)，对显存和 BPTT 来说比较健康
-    batch_size = 32
-    num_episodes = 6000 # 序列训练需要更久的探索时间
-    target_update_freq = 10
+    batch_size = args.batch_size
+    num_episodes = args.episodes
+    target_update_freq = args.target_update_freq
+    burn_in = run_config["burn_in"]
+    learn_len = run_config["learn_len"]
+    train_every_steps = run_config["train_every_steps"]
+    updates_per_train = run_config["updates_per_train"]
     
     # ==========================================
     # 4. 主干交互循环 
     # ==========================================
     pbar = tqdm(range(1, num_episodes + 1), desc="DRQN 训练进度", unit="ep")
+    total_step_count = 0
     
     for episode in pbar:
         _, state = env.reset()
@@ -75,19 +178,18 @@ def main():
             
             episode_reward += reward
             step_count += 1
+            total_step_count += 1
+
+            min_ready_episodes = max(args.min_buffer_episodes, batch_size)
+            if len(buffer) >= min_ready_episodes and total_step_count % train_every_steps == 0:
+                for _ in range(updates_per_train):
+                    batch_data = buffer.sample_sequence_batch(batch_size, burn_in=burn_in, learn_len=learn_len)
+                    loss = learner.train_step(batch_data, burn_in=burn_in)
+                    episode_loss += loss
             
         # 【DRQN 核心 3】：游戏结束，将一整条完整的时序轨迹压入 Buffer
         buffer.push_episode(current_episode_trajectory)
         
-        # 训练更新逻辑：当 Buffer 里的完整轨迹数量达到 Batch Size 时才开始训练
-        if len(buffer) >= batch_size:
-            # 从 Buffer 抽取对齐 (Padding) 并带有掩码 (Mask) 的 3D 张量
-            batch_data = buffer.sample_batch(batch_size)
-            
-            # 执行沿时间反向传播 (BPTT)
-            loss = learner.train_step(batch_data)
-            episode_loss += loss
-            
         # 回合结束处理
         agent.decay_epsilon()
         if episode % target_update_freq == 0:
@@ -110,10 +212,12 @@ def main():
         
         # 定期保存模型权重
         if episode % 100 == 0:
-            torch.save(policy_net.state_dict(), f"DRQN_Test/models/drqn_model_ep{episode}.pth")
-            pbar.write(f"--> [检查点] 模型已保存至 DRQN_Test/models/drqn_model_ep{episode}.pth")
+            ckpt_path = f"DRQN_Test/models/{args.save_prefix}_model_ep{episode}.pth"
+            torch.save(policy_net.state_dict(), ckpt_path)
+            pbar.write(f"--> [检查点] 模型已保存至 {ckpt_path}")
 
-    torch.save(policy_net.state_dict(), "DRQN_Test/models/drqn_model_final.pth")
+    final_path = f"DRQN_Test/models/{args.save_prefix}_model_final.pth"
+    torch.save(policy_net.state_dict(), final_path)
     print("\nDRQN 训练结束！最终模型已保存。")
     env.close()
 

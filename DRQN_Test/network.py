@@ -2,10 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from DRQN_Test.action_factorization import CHASSIS_DIM, TURRET_DIM, FIRE_DIM
+
 class DRQNNetwork(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=128):
+    def __init__(self, state_dim, action_dim, hidden_dim=128, chassis_dim=CHASSIS_DIM, turret_dim=TURRET_DIM, fire_dim=FIRE_DIM):
         super(DRQNNetwork, self).__init__()
         self.hidden_dim = hidden_dim
+        self.chassis_dim = chassis_dim
+        self.turret_dim = turret_dim
+        self.fire_dim = fire_dim
 
         # 1. 特征提取层 (将几十维的状态升维到隐藏层空间)
         self.fc1 = nn.Linear(state_dim, hidden_dim)
@@ -14,8 +19,10 @@ class DRQNNetwork(nn.Module):
         # 它接收 fc1 的输出特征，以及上一个时间步的隐状态 (Hidden State)
         self.rnn = nn.GRUCell(hidden_dim, hidden_dim)
 
-        # 3. 动作输出层 (输出每个动作的 Q 值)
-        self.fc2 = nn.Linear(hidden_dim, action_dim)
+        # 3. 动作因子化三头输出
+        self.chassis_head = nn.Linear(hidden_dim, self.chassis_dim)
+        self.turret_head = nn.Linear(hidden_dim, self.turret_dim)
+        self.fire_head = nn.Linear(hidden_dim, self.fire_dim)
 
     def init_hidden(self, batch_size=1, device="cpu"):
         """
@@ -30,7 +37,7 @@ class DRQNNetwork(nn.Module):
         前向传播
         :param x: 当前的输入状态，形状 (Batch_Size, State_Dim)
         :param hidden_state: 上一刻的隐状态，形状 (Batch_Size, Hidden_Dim)
-        :return: 当前的 Q 值和更新后的隐状态
+        :return: 三个头的 Q 值和更新后的隐状态
         """
         # 1. 提取当前状态的特征
         x = F.relu(self.fc1(x))
@@ -39,9 +46,8 @@ class DRQNNetwork(nn.Module):
         # 注意：GRUCell 的输入必须是 2D 张量 (Batch_Size, Feature_Dim)
         h_out = self.rnn(x, hidden_state)
         
-        # 3. 基于最新的记忆，计算当前应该采取的动作 Q 值
-        q_values = self.fc2(h_out)
-        
-        # 【关键】：必须把 h_out 连同 q_values 一起返回出去
-        # 因为外层的 Agent 需要把这个 h_out 存下来，留给下一个 Step 使用
-        return q_values, h_out
+        q_chassis = self.chassis_head(h_out)
+        q_turret = self.turret_head(h_out)
+        q_fire = self.fire_head(h_out)
+
+        return q_chassis, q_turret, q_fire, h_out
