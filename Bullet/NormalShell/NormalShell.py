@@ -18,7 +18,7 @@ class NormalShell(BaseBullet):
         self.size = (6, 6)
         self.lifetime = 1.2 
         self.speed_rate = 1.0 
-        self.damage_rate = 2 
+        self.damage_rate = 2.5 
         self.cooldown = 2
         self.penetration = [1.0, 0.8, 0.6] 
         

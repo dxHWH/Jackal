@@ -20,6 +20,6 @@ ENEMY_STATE_TEXT = False            # 增加敌方坦克状态信息文本提示
 UNIT_RECORD_TEXT = False            # 单位记录文本
 PRINT_VISIBLE_UNIT = False          # 打印unit_0的可见单位（包含视野与通过通信同步的单位）
 
-AUTO_COMMUNICATE = True             # 自动通信
+AUTO_COMMUNICATE = False            # 自动通信（关闭：仅保留显式广播逻辑）
 
 USE_TEAR_DROP_VISION = False        # 使用水滴形视野，当此项为false时使用圆形视野

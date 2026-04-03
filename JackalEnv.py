@@ -18,7 +18,7 @@ from Unit.UnitManager import UnitManager
 
 
 class JackalEnv:
-    def __init__(self, headless=True, fixed_delta_time=0.01, use_video=False, video_dir="videos", auto_aim=True, reward_config=None):
+    def __init__(self, headless=True, fixed_delta_time=0.03, use_video=False, video_dir="videos", auto_aim=True, reward_config=None):
         self.headless = headless
         self.delta_time = fixed_delta_time
         
@@ -154,8 +154,12 @@ class JackalEnv:
         if not agent.is_alive:
             avail_actions[0] = 1 
             return avail_actions
-        avail_actions[0:9] = [1] * 9  
-        avail_actions[9:25] = [1] * 16
+        if self.auto_aim:
+            # auto_aim: 0~8 为机动，9 为开火
+            avail_actions[0:10] = [1] * 10
+        else:
+            # manual_aim: 0~26 为机动+炮塔，27 为开火
+            avail_actions[0:28] = [1] * 28
         return avail_actions
         
     def get_avail_actions(self):
@@ -354,15 +358,16 @@ class JackalEnv:
     def get_obs(self):
         """
         获取所有智能体的局部观测 (Observation)
-        包含自身、友军、敌军以及视野内最近的一颗子弹。
+        包含自身、友军、敌军、视野内最近子弹以及时间进度。
         """
         obs_list = []
         sight_range = 400.0
+        time_ratio = self.steps / self.max_steps
         
         for agent_id, agent in enumerate(self.agents):
             if not agent.is_alive:
-                # 自身(6) + 友军((N-1)*5) + 敌军(M*5) + 最近子弹(5)
-                obs_dim = 6 + (self.n_agents - 1) * 5 + self.n_enemies * 5 + 5
+                # 自身(6) + 友军((N-1)*5) + 敌军(M*5) + 最近子弹(5) + 时间(1)
+                obs_dim = 6 + (self.n_agents - 1) * 5 + self.n_enemies * 5 + 5 + 1
                 obs_list.append(np.zeros(obs_dim, dtype=np.float32))
                 continue
                 
@@ -430,11 +435,11 @@ class JackalEnv:
             else:
                 # 视野内绝对安全，用 0 填充
                 obs_features.extend([0.0, 0.0, 0.0, 0.0, 0.0])
+
+            # --- 5. 时间进度特征 (1维) ---
+            obs_features.append(time_ratio)
                     
             obs_list.append(np.array(obs_features, dtype=np.float32))
-
-        time_ratio = self.steps / self.max_steps
-        obs_list.append(time_ratio)    
         return obs_list
 
     def get_state(self):

@@ -3,7 +3,7 @@ from Map.BaseTile import BaseTile
 from Map.FlatTile.FlatTile import *
 from Map.BarrierTile.BarrierTile import *
 from Map.WaterTile.WaterTile import *
-from typing import List, Tuple, Optional
+from typing import Dict, List, Optional, Set, Tuple
 import os
 from Parameter import *
 from GameMode import *
@@ -22,6 +22,10 @@ class GameMap:
         self.tiles = []                      # 二维地块列表
         self.unit_obstacles = []             # 阻挡单位的矩形列表
         self.bullet_obstacles = []           # 阻挡子弹的矩形列表
+        # 空间哈希索引：将静态障碍按网格分桶，减少碰撞时的全量遍历。
+        self._spatial_cell_size = max(1, tile_size)
+        self._unit_obstacle_index: Dict[Tuple[int, int], List[pygame.Rect]] = {}
+        self._bullet_obstacle_index: Dict[Tuple[int, int], List[pygame.Rect]] = {}
         self.width = 0
         self.height = 0
         self.map_surface = None              # 地图表面（用于快速绘制）
@@ -73,6 +77,7 @@ class GameMap:
 
         self._create_map_surface()
         self._render_all()
+        self._rebuild_spatial_indices()
 
     def _create_map_surface(self) -> None:
         """创建地图表面"""
@@ -100,6 +105,51 @@ class GameMap:
                     self.unit_obstacles.append(tile.rect)
                 if tile.blocks_bullet:
                     self.bullet_obstacles.append(tile.rect)
+        self._rebuild_spatial_indices()
+
+    def _iter_cells_for_rect(self, rect: pygame.Rect):
+        """枚举 rect 覆盖到的空间哈希网格坐标。"""
+        cell = self._spatial_cell_size
+        min_cx = rect.left // cell
+        max_cx = rect.right // cell
+        min_cy = rect.top // cell
+        max_cy = rect.bottom // cell
+        for cx in range(min_cx, max_cx + 1):
+            for cy in range(min_cy, max_cy + 1):
+                yield (cx, cy)
+
+    def _build_spatial_index(self, obstacles: List[pygame.Rect]) -> Dict[Tuple[int, int], List[pygame.Rect]]:
+        """将障碍按网格分桶，供碰撞 broad-phase 查询。"""
+        index: Dict[Tuple[int, int], List[pygame.Rect]] = {}
+        for obs in obstacles:
+            for key in self._iter_cells_for_rect(obs):
+                index.setdefault(key, []).append(obs)
+        return index
+
+    def _rebuild_spatial_indices(self) -> None:
+        """重建静态障碍空间索引。地图构建后障碍通常不变，只需少量重建。"""
+        self._unit_obstacle_index = self._build_spatial_index(self.unit_obstacles)
+        self._bullet_obstacle_index = self._build_spatial_index(self.bullet_obstacles)
+
+    def _query_obstacles(self, index: Dict[Tuple[int, int], List[pygame.Rect]], rect: pygame.Rect) -> List[pygame.Rect]:
+        """返回与 rect 同网格桶的候选障碍集合（未做精确碰撞判定）。"""
+        candidates: List[pygame.Rect] = []
+        seen: Set[int] = set()
+        for key in self._iter_cells_for_rect(rect):
+            for obs in index.get(key, []):
+                oid = id(obs)
+                if oid not in seen:
+                    seen.add(oid)
+                    candidates.append(obs)
+        return candidates
+
+    def get_candidate_unit_obstacles(self, rect: pygame.Rect) -> List[pygame.Rect]:
+        """单位碰撞 broad-phase 候选障碍。"""
+        return self._query_obstacles(self._unit_obstacle_index, rect)
+
+    def get_candidate_bullet_obstacles(self, rect: pygame.Rect) -> List[pygame.Rect]:
+        """子弹碰撞 broad-phase 候选障碍。"""
+        return self._query_obstacles(self._bullet_obstacle_index, rect)
 
     def draw(self, surface: pygame.Surface, camera_offset: List[float] = [0, 0]) -> None:
         """绘制地图"""
@@ -174,7 +224,7 @@ class GameMap:
 
     def check_collision(self, rect: pygame.Rect) -> bool:
         """检查矩形是否与任何单位障碍物碰撞"""
-        for obstacle in self.unit_obstacles:
+        for obstacle in self.get_candidate_unit_obstacles(rect):
             if rect.colliderect(obstacle):
                 return True
         return False
@@ -194,14 +244,14 @@ class GameMap:
     def get_colliding_obstacles(self, rect: pygame.Rect) -> List[pygame.Rect]:
         """获取与矩形碰撞的所有单位障碍物"""
         colliding = []
-        for obstacle in self.unit_obstacles:
+        for obstacle in self.get_candidate_unit_obstacles(rect):
             if rect.colliderect(obstacle):
                 colliding.append(obstacle)
         return colliding
 
     def is_bullet_blocked(self, rect: pygame.Rect) -> bool:
         """检查子弹是否被阻挡"""
-        for obstacle in self.bullet_obstacles:
+        for obstacle in self.get_candidate_bullet_obstacles(rect):
             if rect.colliderect(obstacle):
                 return True
         return False

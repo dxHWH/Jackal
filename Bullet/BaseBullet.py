@@ -169,7 +169,14 @@ class BaseBullet:
     
     def _check_obstacle_collision(self, game_map):
         """检查与障碍物的碰撞（使用 bullet_obstacles）"""
-        for obstacle in game_map.bullet_obstacles: 
+        # 优先使用 GameMap 的空间索引候选，避免每颗子弹每帧全量扫描障碍物。
+        if hasattr(game_map, 'get_candidate_bullet_obstacles'):
+            candidates = game_map.get_candidate_bullet_obstacles(self.bounding_box)
+        else:
+            # 兼容旧地图实现
+            candidates = game_map.bullet_obstacles
+
+        for obstacle in candidates:
             if self.bounding_box.colliderect(obstacle):
                 return obstacle
         return None

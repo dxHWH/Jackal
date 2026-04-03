@@ -84,9 +84,15 @@ def main():
         "max_steps": args.max_steps,
         "min_buffer_episodes": args.min_buffer_episodes,
     }
-    os.makedirs("DRQN_Test/models", exist_ok=True)
-    with open("DRQN_Test/models/drqn_run_config.json", "w", encoding="utf-8") as f:
+    model_root_dir = "DRQN_Test/models"
+    run_dir = os.path.join(model_root_dir, args.save_prefix)
+    checkpoint_dir = os.path.join(run_dir, "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    run_config_path = os.path.join(run_dir, "run_config.json")
+    with open(run_config_path, "w", encoding="utf-8") as f:
         json.dump(run_config, f, ensure_ascii=False, indent=2)
+    print(f"运行配置已保存: {run_config_path}")
     
     # ==========================================
     # 2. 实例化带 GRU 记忆的神经网络
@@ -212,13 +218,13 @@ def main():
         
         # 定期保存模型权重
         if episode % 100 == 0:
-            ckpt_path = f"DRQN_Test/models/{args.save_prefix}_model_ep{episode}.pth"
+            ckpt_path = os.path.join(checkpoint_dir, f"ep{episode}.pth")
             torch.save(policy_net.state_dict(), ckpt_path)
             pbar.write(f"--> [检查点] 模型已保存至 {ckpt_path}")
 
-    final_path = f"DRQN_Test/models/{args.save_prefix}_model_final.pth"
+    final_path = os.path.join(run_dir, "model_final.pth")
     torch.save(policy_net.state_dict(), final_path)
-    print("\nDRQN 训练结束！最终模型已保存。")
+    print(f"\nDRQN 训练结束！最终模型已保存至 {final_path}")
     env.close()
 
 if __name__ == "__main__":

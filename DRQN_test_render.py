@@ -1,19 +1,68 @@
 import torch
 import os
 import json
+import argparse
 from JackalEnv import JackalEnv
 
 # 导入 DRQN 网络
 from DRQN_Test.network import DRQNNetwork
 from DRQN_Test.action_factorization import compose_action
 
-def test_drqn_model(model_path, episodes=3):
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="DRQN render evaluation")
+    parser.add_argument("--model-path", type=str, default="DRQN_Test/models/drqn/model_final.pth")
+    parser.add_argument("--episodes", type=int, default=3)
+    parser.add_argument("--video-dir", type=str, default="eval_videos_drqn")
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="覆盖测试环境最大步数；若不传则优先读取 run_config.json 的 max_steps",
+    )
+    parser.add_argument(
+        "--fixed-delta-time",
+        type=float,
+        default=None,
+        help="覆盖测试环境 fixed_delta_time；若不传则优先读取 run_config.json",
+    )
+    return parser.parse_args()
+
+
+def resolve_run_config_path(model_path):
+    # 新布局: DRQN_Test/models/<run_name>/model_final.pth + run_config.json
+    same_dir_config = os.path.join(os.path.dirname(model_path), "run_config.json")
+    if os.path.exists(same_dir_config):
+        return same_dir_config
+
+    # 旧布局兼容: DRQN_Test/models/<prefix>_model_final.pth + <prefix>_run_config.json
+    base_name = os.path.basename(model_path)
+    if base_name.endswith("_model_final.pth"):
+        legacy_config_name = base_name.replace("_model_final.pth", "_run_config.json")
+        legacy_config_path = os.path.join(os.path.dirname(model_path), legacy_config_name)
+        if os.path.exists(legacy_config_path):
+            return legacy_config_path
+
+    if "_model_ep" in base_name:
+        prefix = base_name.split("_model_ep", 1)[0]
+        legacy_config_name = f"{prefix}_run_config.json"
+        legacy_config_path = os.path.join(os.path.dirname(model_path), legacy_config_name)
+        if os.path.exists(legacy_config_path):
+            return legacy_config_path
+
+    # 最后回退（历史脚本写死文件名）
+    fallback_config = os.path.join(os.path.dirname(model_path), "drqn_run_config.json")
+    if os.path.exists(fallback_config):
+        return fallback_config
+    return None
+
+def test_drqn_model(model_path, episodes=3, video_dir="eval_videos_drqn", max_steps=None, fixed_delta_time=None):
     print(f"正在加载 DRQN 模型并准备录制视频: {model_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    config_path = os.path.join(os.path.dirname(model_path), "drqn_run_config.json")
+    config_path = resolve_run_config_path(model_path)
     run_config = {}
-    if os.path.exists(config_path):
+    if config_path and os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             run_config = json.load(f)
         print(f"检测到训练配置: {config_path}")
@@ -22,12 +71,27 @@ def test_drqn_model(model_path, episodes=3):
     # 1. 初始化环境 (开启视频录制)
     # ==========================================
     # 注意：这里的 auto_aim 和 n_enemies 必须与你训练该模型时完全一致！
-    env = JackalEnv(
-        headless=True,
-        use_video=True,
-        video_dir="eval_videos_drqn",
-        auto_aim=run_config.get("auto_aim", False)
-    )
+    config_delta_time = run_config.get("fixed_delta_time", None)
+    env_delta_time = fixed_delta_time if fixed_delta_time is not None else config_delta_time
+
+    env_kwargs = {
+        "headless": True,
+        "use_video": True,
+        "video_dir": video_dir,
+        "auto_aim": run_config.get("auto_aim", False),
+    }
+    if env_delta_time is not None:
+        env_kwargs["fixed_delta_time"] = env_delta_time
+
+    env = JackalEnv(**env_kwargs)
+
+    # 默认读取训练配置中的 max_steps，确保测试时长与训练一致。
+    if max_steps is not None:
+        env.max_steps = int(max_steps)
+    elif run_config.get("max_steps") is not None:
+        env.max_steps = int(run_config["max_steps"])
+
+    print(f"测试环境配置: max_steps={env.max_steps}, delta_time={env.delta_time}")
     
     _, initial_state = env.reset()
     state_dim = initial_state.shape[0]
@@ -118,11 +182,14 @@ def test_drqn_model(model_path, episodes=3):
     # 4. 释放资源并保存视频
     # ==========================================
     env.close()
-    print(f"\n测试完成！录制的视频已保存在 {os.path.abspath('eval_videos_drqn')} 目录下。")
+    print(f"\n测试完成！录制的视频已保存在 {os.path.abspath(video_dir)} 目录下。")
 
 if __name__ == "__main__":
-    # 指定你要测试的权重文件路径。
-    # 建议先跑 final，如果效果不好，可以跑跑 ep900, ep800 看看是不是后期过拟合了
-    target_model_path = "DRQN_Test/models/drqn_model_final.pth" 
-    
-    test_drqn_model(target_model_path, episodes=3)
+    args = parse_args()
+    test_drqn_model(
+        args.model_path,
+        episodes=args.episodes,
+        video_dir=args.video_dir,
+        max_steps=args.max_steps,
+        fixed_delta_time=args.fixed_delta_time,
+    )

@@ -162,12 +162,19 @@ class BaseUnit:
         self.visible_map = game_map
         self.visible_units.clear()
         self.visible_bullets.clear()
+
+        # 性能关键路径：visible_units 仅作为"可见对象容器"使用。
+        # 这里避免调用 UnitManager.add_unit()，因为 add_unit 会为 usingAI 单位
+        # 构造 EnemyAI，导致每帧视野刷新时产生大量不必要对象分配与逻辑开销。
+        # 直接写入 units 列表即可满足后续所有读取逻辑（广播/观测都只遍历 units）。
         for unit in unit_manager.units:
             if self.is_in_sight(unit):
-                self.visible_units.add_unit(unit, bullet_manager, game_map)
+                self.visible_units.units.append(unit)
+
+        # 同理，visible_bullets 只需保存可见子弹引用，不需要走 add_bullet 的调试分支。
         for bullet in bullet_manager.bullets:
             if self.is_in_sight(bullet):
-                self.visible_bullets.add_bullet(bullet)
+                self.visible_bullets.bullets.append(bullet)
     
     def _update_ammo_switch(self, delta_time) -> None:
         """更新弹药切换状态"""
