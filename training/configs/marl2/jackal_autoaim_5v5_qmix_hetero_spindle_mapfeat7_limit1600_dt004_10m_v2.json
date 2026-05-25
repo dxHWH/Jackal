@@ -1,0 +1,236 @@
+{
+  "seed": 62,
+  "experiment": {
+    "name": "jackal_autoaim_5v5_qmix_hetero_spindle_mapfeat7_limit1600_dt004_10m_v2"
+  },
+  "env": {
+    "name": "jackal",
+    "headless": true,
+    "fixed_delta_time": 0.04,
+    "use_video": false,
+    "video_dir": "artifacts/videos/marl2_eval",
+    "auto_aim": true,
+    "map_name": "spindle_map",
+    "include_map_features": true,
+    "obs_map_grid_size": 7,
+    "obs_map_cell_size": 64,
+    "state_map_grid_size": 10,
+    "n_agents": 5,
+    "n_enemies": 5,
+    "unit_sight_range": 420.0,
+    "ally_unit_types": [
+      "tank",
+      "tank",
+      "tank",
+      "archie",
+      "archie"
+    ],
+    "enemy_unit_types": [
+      "tank",
+      "tank",
+      "tank",
+      "archie",
+      "archie"
+    ],
+    "unit_type_names": [
+      "tank",
+      "archie"
+    ],
+    "include_unit_type_onehot": true,
+    "ally_positions": [
+      [
+        330,
+        170
+      ],
+      [
+        330,
+        320
+      ],
+      [
+        330,
+        470
+      ],
+      [
+        260,
+        245
+      ],
+      [
+        260,
+        395
+      ]
+    ],
+    "enemy_positions": [
+      [
+        630,
+        170
+      ],
+      [
+        630,
+        320
+      ],
+      [
+        630,
+        470
+      ],
+      [
+        700,
+        245
+      ],
+      [
+        700,
+        395
+      ]
+    ],
+    "ally_initial_headings": [
+      90.0,
+      90.0,
+      90.0,
+      90.0,
+      90.0
+    ],
+    "enemy_initial_headings": [
+      270.0,
+      270.0,
+      270.0,
+      270.0,
+      270.0
+    ],
+    "max_steps": 1600,
+    "enemy_use_ai": true,
+    "ally_unit_type_scales": {
+      "tank": {
+        "health": 2.5
+      },
+      "archie": {
+        "health": 2.0,
+        "turret_turn": 3.6
+      }
+    },
+    "enemy_unit_type_scales": {
+      "tank": {
+        "health": 2.5,
+        "turret_turn": 2.25
+      },
+      "archie": {
+        "health": 2.0,
+        "turret_turn": 3.6
+      }
+    },
+    "agent_fire_cooldown_by_type": {
+      "tank": 1.0,
+      "archie": 1.6
+    },
+    "enemy_ai_fire_cooldown_by_type": {
+      "tank": 1.5,
+      "archie": 2.0
+    },
+    "enemy_ai_fire_angle_tolerance": 5.0,
+    "bullet_overrides_by_unit_type": {
+      "archie": {
+        "rocket_shell": {
+          "damage_rate": 1.25,
+          "explosion_damage_rate": 1.25,
+          "explosion_radius": 65.0
+        }
+      }
+    },
+    "reward_config": {
+      "auto_aim": {
+        "enemy_limit_scale": 0.0026,
+        "agent_limit_scale": 0.0025,
+        "enemy_kill_bonus": 1.1,
+        "agent_killed_penalty": 2.3,
+        "approach_scale": 0.0,
+        "alive_adv_scale": 0.0,
+        "step_penalty": 0.001,
+        "reward_clip_abs": 0.0,
+        "win_bonus": 12.0,
+        "fast_win_bonus": 4.0,
+        "fast_win_reference_steps": 1125,
+        "lose_penalty": 14.0,
+        "timeout_penalty": 10.0,
+        "no_kill_timeout_penalty": 5.0,
+        "timeout_return_penalty_scale": 2.0
+      }
+    }
+  },
+  "eval_env": {
+    "position_jitter": 3.0,
+    "heading_jitter": 3.0
+  },
+  "agent": {
+    "name": "rnn",
+    "rnn_hidden_dim": 384,
+    "rnn_input_hidden_dim": 512,
+    "rnn_input_layers": 2,
+    "use_last_action": true,
+    "use_agent_id": true
+  },
+  "algo": {
+    "name": "qmix",
+    "gamma": 0.99,
+    "lr": 7e-05,
+    "batch_size": 16,
+    "buffer_size": 1500,
+    "mixing_embed_dim": 96,
+    "double_q": true,
+    "target_update_mode": "soft",
+    "target_update_tau": 0.005,
+    "target_update_interval": 200,
+    "grad_norm_clip": 5.0,
+    "updates_per_collect": 2
+  },
+  "train": {
+    "runner": "parallel",
+    "parallel_envs": 16,
+    "parallel_start_method": "spawn",
+    "use_cuda": true,
+    "tensorboard": true,
+    "tensorboard_dir": "artifacts/tensorboard/marl2/by_map/spindle/jackal_autoaim_5v5_qmix_hetero_spindle_mapfeat7_limit1600_dt004_10m_v2",
+    "t_max": 10000000,
+    "epsilon_start": 1.0,
+    "epsilon_finish": 0.05,
+    "epsilon_anneal_time": 800000,
+    "test_interval": 30000,
+    "test_nepisode": 64,
+    "eval_extra_nepisode": 0,
+    "test_seed_base": 986000,
+    "save_interval": 60000,
+    "log_interval": 1000,
+    "log_interval_episodes": 32,
+    "early_stop_win_rate": null,
+    "early_stop_consecutive_evals": 5,
+    "min_t_env_before_stop": 80000,
+    "save_best_single": true,
+    "best_single_min_win_rate": 0.01,
+    "best_model_window": 5,
+    "best_model_require_full_window": true,
+    "best_model_max_recent_zero": 2,
+    "best_model_min_recent_win_rate": 0.15,
+    "stabilize_after_window": true,
+    "stabilize_min_t_env": 700000,
+    "stabilize_single_win_rate": null,
+    "stabilize_window_win_rate": 0.3,
+    "stabilize_lr": 3e-05,
+    "stabilize_updates_per_collect": 1,
+    "stabilize_stage2_single_win_rate": null,
+    "stabilize_stage2_window_win_rate": 0.5,
+    "stabilize_stage2_lr": 1e-05,
+    "stabilize_stage2_updates_per_collect": 1,
+    "stabilize_stage3_single_win_rate": null,
+    "stabilize_stage3_window_win_rate": 0.75,
+    "stabilize_stage3_lr": 1e-06,
+    "stabilize_stage3_updates_per_collect": 1,
+    "rollback_on_collapse": true,
+    "rollback_min_t_env": 1000000,
+    "rollback_drop_from_best": 0.18,
+    "rollback_min_best_win_rate": 0.3,
+    "rollback_cooldown_evals": 3,
+    "rollback_max_times": null,
+    "rollback_clear_buffer": true,
+    "rollback_lr": 1e-05,
+    "rollback_updates_per_collect": 1,
+    "rollback_stabilization_stage": 2,
+    "reset_best_score_on_resume": false
+  }
+}

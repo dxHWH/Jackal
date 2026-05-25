@@ -1,0 +1,178 @@
+{
+  "seed": 46,
+  "experiment": {
+    "name": "jackal_autoaim_5v5_etdqmix_smac_positive_norm20_ally8_enemy7_fastwin_limit2000_8m_v1"
+  },
+  "env": {
+    "name": "jackal",
+    "headless": true,
+    "fixed_delta_time": 0.03,
+    "use_video": false,
+    "video_dir": "artifacts/videos/marl2_eval",
+    "auto_aim": true,
+    "n_agents": 5,
+    "n_enemies": 5,
+    "unit_sight_range": 360.0,
+    "ally_positions": [
+      [
+        300,
+        120
+      ],
+      [
+        300,
+        220
+      ],
+      [
+        300,
+        320
+      ],
+      [
+        300,
+        420
+      ],
+      [
+        300,
+        520
+      ]
+    ],
+    "enemy_positions": [
+      [
+        620,
+        120
+      ],
+      [
+        620,
+        220
+      ],
+      [
+        620,
+        320
+      ],
+      [
+        620,
+        420
+      ],
+      [
+        620,
+        520
+      ]
+    ],
+    "max_steps": 2000,
+    "enemy_use_ai": true,
+    "ally_unit_scales": {
+      "health": 2.0,
+      "speed": 1.03,
+      "acceleration": 1.03,
+      "turn": 1.03,
+      "turret_turn": 1.0
+    },
+    "enemy_unit_scales": {
+      "health": 1.75,
+      "speed": 0.97,
+      "acceleration": 0.97,
+      "turn": 0.97,
+      "turret_turn": 0.85
+    },
+    "agent_fire_cooldown_max": 1.0,
+    "enemy_ai_fire_cooldown_max": 1.5,
+    "enemy_ai_fire_angle_tolerance": 5.0,
+    "reward_config": {
+      "auto_aim": {
+        "enemy_limit_scale": 0.0057142857,
+        "agent_limit_scale": 0.002,
+        "enemy_kill_bonus": 1.2,
+        "agent_killed_penalty": 2.0,
+        "approach_scale": 0.0,
+        "alive_adv_scale": 0.0,
+        "step_penalty": 0.001,
+        "reward_clip_abs": 0.0,
+        "win_bonus": 10.0,
+        "fast_win_bonus": 4.0,
+        "fast_win_reference_steps": 1400,
+        "lose_penalty": 12.0,
+        "timeout_penalty": 10.0,
+        "no_kill_timeout_penalty": 5.0,
+        "timeout_return_penalty_scale": 2.0
+      }
+    }
+  },
+  "agent": {
+    "name": "etd_rnn",
+    "rnn_hidden_dim": 256,
+    "use_last_action": true,
+    "use_agent_id": false,
+    "etd_entity_embed_dim": 128,
+    "etd_attn_heads": 4,
+    "etd_attn_dropout": 0.0,
+    "etd_log_attention": false,
+    "max_obs_bullets": 3,
+    "n_enemies": 5
+  },
+  "algo": {
+    "name": "qmix",
+    "gamma": 0.99,
+    "lr": 0.0001,
+    "batch_size": 16,
+    "buffer_size": 1000,
+    "mixing_embed_dim": 64,
+    "double_q": true,
+    "target_update_mode": "soft",
+    "target_update_tau": 0.01,
+    "target_update_interval": 200,
+    "grad_norm_clip": 5.0,
+    "updates_per_collect": 2
+  },
+  "train": {
+    "runner": "parallel",
+    "parallel_envs": 16,
+    "parallel_start_method": "spawn",
+    "use_cuda": true,
+    "tensorboard": true,
+    "tensorboard_dir": "artifacts/tensorboard/marl2/by_map/border/jackal_autoaim_5v5_etdqmix_smac_positive_norm20_ally8_enemy7_fastwin_limit2000_8m_v1",
+    "t_max": 8000000,
+    "epsilon_start": 1.0,
+    "epsilon_finish": 0.05,
+    "epsilon_anneal_time": 500000,
+    "test_interval": 30000,
+    "test_nepisode": 64,
+    "eval_extra_nepisode": 64,
+    "test_seed_base": 960000,
+    "save_interval": 60000,
+    "log_interval": 1000,
+    "log_interval_episodes": 32,
+    "early_stop_win_rate": null,
+    "early_stop_consecutive_evals": 5,
+    "min_t_env_before_stop": 80000,
+    "save_best_single": true,
+    "best_single_min_win_rate": 0.01,
+    "best_model_window": 5,
+    "best_model_require_full_window": true,
+    "best_model_max_recent_zero": 2,
+    "best_model_min_recent_win_rate": 0.15,
+    "stabilize_after_window": true,
+    "stabilize_min_t_env": 500000,
+    "stabilize_single_win_rate": null,
+    "stabilize_window_win_rate": 0.3,
+    "stabilize_lr": 5e-05,
+    "stabilize_updates_per_collect": 1,
+    "stabilize_stage2_single_win_rate": null,
+    "stabilize_stage2_window_win_rate": 0.45,
+    "stabilize_stage2_lr": 1e-05,
+    "stabilize_stage2_updates_per_collect": 1,
+    "stabilize_stage3_single_win_rate": null,
+    "stabilize_stage3_window_win_rate": 0.7,
+    "stabilize_stage3_lr": 1e-06,
+    "stabilize_stage3_updates_per_collect": 1,
+    "rollback_on_collapse": true,
+    "rollback_min_t_env": 800000,
+    "rollback_drop_from_best": 0.18,
+    "rollback_min_best_win_rate": 0.3,
+    "rollback_cooldown_evals": 3,
+    "rollback_max_times": null,
+    "rollback_clear_buffer": true,
+    "rollback_lr": 1e-05,
+    "rollback_updates_per_collect": 1,
+    "rollback_stabilization_stage": 2,
+    "reset_best_score_on_resume": false
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "seed": 42,
+  "experiment": {
+    "name": "jackal_autoaim_3v3_qmix_gpu7_longrun_v2_1p2m"
+  },
+  "env": {
+    "name": "jackal",
+    "headless": true,
+    "fixed_delta_time": 0.03,
+    "use_video": false,
+    "video_dir": "artifacts/videos/marl2_eval",
+    "auto_aim": true,
+    "n_agents": 3,
+    "n_enemies": 3,
+    "ally_positions": [[340, 220], [340, 320], [340, 420]],
+    "enemy_positions": [[560, 220], [560, 320], [560, 420]],
+    "max_steps": 700,
+    "enemy_use_ai": true,
+    "ally_unit_scales": {
+      "health": 1.15,
+      "turret_turn": 1.1
+    },
+    "enemy_unit_scales": {
+      "speed": 0.75,
+      "acceleration": 0.75,
+      "turn": 0.75,
+      "turret_turn": 0.65,
+      "health": 0.75
+    },
+    "enemy_ai_fire_cooldown_max": 0.9,
+    "enemy_ai_fire_angle_tolerance": 6.0,
+    "reward_config": {
+      "auto_aim": {
+        "enemy_limit_scale": 0.2,
+        "agent_limit_scale": 0.08,
+        "enemy_kill_bonus": 30.0,
+        "agent_killed_penalty": 10.0,
+        "win_bonus": 80.0,
+        "lose_penalty": 40.0,
+        "timeout_penalty": 55.0
+      }
+    }
+  },
+  "agent": {
+    "rnn_hidden_dim": 128,
+    "use_last_action": true,
+    "use_agent_id": true
+  },
+  "algo": {
+    "name": "qmix",
+    "gamma": 0.99,
+    "lr": 0.0003,
+    "batch_size": 16,
+    "buffer_size": 5000,
+    "mixing_embed_dim": 32,
+    "double_q": true,
+    "target_update_interval": 200,
+    "grad_norm_clip": 10.0,
+    "updates_per_collect": 2
+  },
+  "train": {
+    "use_cuda": true,
+    "t_max": 1200000,
+    "epsilon_start": 1.0,
+    "epsilon_finish": 0.05,
+    "epsilon_anneal_time": 600000,
+    "test_interval": 5000,
+    "test_nepisode": 12,
+    "best_eval_nepisode": 24,
+    "test_seed_base": 420000,
+    "save_interval": 10000,
+    "log_interval": 1000,
+    "early_stop_win_rate": 0.75,
+    "early_stop_consecutive_evals": 4,
+    "min_t_env_before_stop": 30000
+  }
+}

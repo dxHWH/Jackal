@@ -1,0 +1,125 @@
+{
+  "seed": 43,
+  "experiment": {
+    "name": "jackal_autoaim_3v3_qmix_smac_reward_fair_stable_v2"
+  },
+  "env": {
+    "name": "jackal",
+    "headless": true,
+    "fixed_delta_time": 0.03,
+    "use_video": false,
+    "video_dir": "artifacts/videos/marl2_eval",
+    "auto_aim": true,
+    "n_agents": 3,
+    "n_enemies": 3,
+    "unit_sight_range": 320.0,
+    "ally_positions": [
+      [
+        340,
+        220
+      ],
+      [
+        340,
+        320
+      ],
+      [
+        340,
+        420
+      ]
+    ],
+    "enemy_positions": [
+      [
+        560,
+        220
+      ],
+      [
+        560,
+        320
+      ],
+      [
+        560,
+        420
+      ]
+    ],
+    "max_steps": 700,
+    "enemy_use_ai": true,
+    "ally_unit_scales": {
+      "health": 1.0,
+      "speed": 1.0,
+      "acceleration": 1.0,
+      "turn": 1.0,
+      "turret_turn": 1.0
+    },
+    "enemy_unit_scales": {
+      "health": 1.0,
+      "speed": 1.0,
+      "acceleration": 1.0,
+      "turn": 1.0,
+      "turret_turn": 2.25
+    },
+    "enemy_ai_fire_cooldown_max": 1.0,
+    "enemy_ai_fire_angle_tolerance": 6.0,
+    "reward_config": {
+      "auto_aim": {
+        "enemy_limit_scale": 0.12,
+        "agent_limit_scale": 0.06,
+        "enemy_kill_bonus": 14.0,
+        "agent_killed_penalty": 10.0,
+        "approach_scale": 0.0,
+        "alive_adv_scale": 0.0,
+        "step_penalty": 0.001,
+        "reward_clip_abs": 6.0,
+        "win_bonus": 45.0,
+        "lose_penalty": 35.0,
+        "timeout_penalty": 20.0,
+        "no_kill_timeout_penalty": 15.0
+      }
+    }
+  },
+  "agent": {
+    "rnn_hidden_dim": 192,
+    "use_last_action": true,
+    "use_agent_id": true
+  },
+  "algo": {
+    "name": "qmix",
+    "gamma": 0.99,
+    "lr": 0.0001,
+    "batch_size": 64,
+    "buffer_size": 8000,
+    "mixing_embed_dim": 64,
+    "double_q": true,
+    "target_update_interval": 200,
+    "grad_norm_clip": 5.0,
+    "updates_per_collect": 2
+  },
+  "train": {
+    "runner": "parallel",
+    "parallel_envs": 8,
+    "parallel_start_method": "spawn",
+    "use_cuda": true,
+    "tensorboard": true,
+    "tensorboard_dir": "artifacts/tensorboard/marl2/by_map/border/jackal_autoaim_3v3_qmix_smac_reward_fair_stable_v2",
+    "t_max": 1200000,
+    "epsilon_start": 1.0,
+    "epsilon_finish": 0.05,
+    "epsilon_anneal_time": 500000,
+    "test_interval": 10000,
+    "test_nepisode": 32,
+    "best_eval_nepisode": 64,
+    "test_seed_base": 540000,
+    "save_interval": 10000,
+    "log_interval": 1000,
+    "log_interval_episodes": 32,
+    "early_stop_win_rate": null,
+    "early_stop_consecutive_evals": 5,
+    "min_t_env_before_stop": 80000,
+    "save_best_single": true,
+    "best_single_min_win_rate": 0.01,
+    "best_model_window": 3,
+    "best_model_require_full_window": true,
+    "best_model_max_recent_zero": 2,
+    "best_model_min_recent_win_rate": 0.2,
+    "reset_best_score_on_resume": false
+  }
+}

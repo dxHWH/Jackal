@@ -1,0 +1,44 @@
+# Python cache and local runtime files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS/editor metadata
+.DS_Store
+.codex
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs and generated run outputs
+*.log
+artifacts/
+marl2_logs/
+jackal_records/
+
+# Model checkpoints and temporary checkpoint stores
+*.pt
+*.pth
+marl2_checkpoints/
+marl2_checkpoints_tmp/
+marl2_checkpoints_tmp_parallel/
+marl2_checkpoints_tmp_parallel2/
+DQN_Test/model/
+DQN_Test/models/
+DRQN_Test/models/
+training/DQN_Test/model/
+training/DQN_Test/models/
+training/DRQN_Test/models/
+
+# Rendered/evaluation videos
+*.mp4
+videos/
+eval_videos/
+eval_videos_drqn/
+marl2_eval_videos/
+training/DRQN_Test/videos/
